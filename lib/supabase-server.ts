@@ -10,22 +10,48 @@
  * wrappers carry the authenticated user's cookie session through so Row Level
  * Security applies; only use the admin client where you truly need to bypass
  * RLS (e.g. the Stripe webhook).
+ *
+ * Uses `@supabase/ssr` (Edge-safe) — the deprecated `auth-helpers` package
+ * crashed the Vercel Edge middleware with "__dirname is not defined".
  */
-import {
-  createRouteHandlerClient,
-  createServerComponentClient,
-} from "@supabase/auth-helpers-nextjs";
+import { createServerClient as createSupabaseServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
+/** Shared session-aware server client backed by the request cookie store. */
+function sessionClient() {
+  const cookieStore = cookies();
+  return createSupabaseServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options),
+            );
+          } catch {
+            // Called from a Server Component, where cookies are read-only.
+            // The middleware refreshes the session, so this is safe to ignore.
+          }
+        },
+      },
+    },
+  );
+}
+
 /** Server-side client for Server Components, layouts and pages. */
 export function createServerClient() {
-  return createServerComponentClient({ cookies });
+  return sessionClient();
 }
 
 /** Client for Route Handlers (app/api). Reads/writes the session cookie. */
 export function createRouteClient() {
-  return createRouteHandlerClient({ cookies });
+  return sessionClient();
 }
 
 /**

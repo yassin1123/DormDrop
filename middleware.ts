@@ -1,4 +1,4 @@
-import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
+import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 import type { UserRole } from "@/types";
@@ -17,14 +17,42 @@ function dashboardForRole(role: UserRole): string {
  *  4. Bounce signed-in users away from /login, /signup and /onboarding.
  *  5. Enforce role access (requester vs runner) and admin access.
  *  6. Send suspended users to /suspended.
+ *
+ * Uses `@supabase/ssr` (Edge-runtime safe). The old `auth-helpers`
+ * `createMiddlewareClient` pulled in Node-only code and crashed the Vercel
+ * Edge runtime with "ReferenceError: __dirname is not defined".
  */
 export async function middleware(req: NextRequest) {
-  const res = NextResponse.next();
-  const supabase = createMiddlewareClient({ req, res });
+  const res = NextResponse.next({ request: { headers: req.headers } });
 
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return req.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            res.cookies.set(name, value, options),
+          );
+        },
+      },
+    },
+  );
+
+  // getUser() (not getSession()) revalidates the token + refreshes the cookie.
   const {
-    data: { session },
-  } = await supabase.auth.getSession();
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  // Build a redirect that carries any refreshed auth cookies set on `res`.
+  const redirectTo = (path: string) => {
+    const r = NextResponse.redirect(new URL(path, req.url));
+    res.cookies.getAll().forEach((c) => r.cookies.set(c));
+    return r;
+  };
 
   const { pathname } = req.nextUrl;
   const isDashboard =
@@ -35,11 +63,13 @@ export async function middleware(req: NextRequest) {
   const isProtected = isDashboard || isAdmin || isOnboarding;
 
   // --- Unauthenticated ------------------------------------------------------
-  if (!session) {
+  if (!user) {
     if (isProtected) {
       const loginUrl = new URL("/login", req.url);
       loginUrl.searchParams.set("redirectedFrom", pathname);
-      return NextResponse.redirect(loginUrl);
+      const r = NextResponse.redirect(loginUrl);
+      res.cookies.getAll().forEach((c) => r.cookies.set(c));
+      return r;
     }
     return res;
   }
@@ -52,18 +82,18 @@ export async function middleware(req: NextRequest) {
   const { data: profile } = await supabase
     .from("profiles")
     .select("role, onboarding_completed, is_admin, is_suspended")
-    .eq("id", session.user.id)
+    .eq("id", user.id)
     .single();
 
   // Suspended users are locked out of everything but the notice page.
   if (profile?.is_suspended) {
-    return NextResponse.redirect(new URL("/suspended", req.url));
+    return redirectTo("/suspended");
   }
 
   // --- Admin area -----------------------------------------------------------
   if (isAdmin) {
     if (!profile?.is_admin) {
-      return NextResponse.redirect(new URL("/requester", req.url));
+      return redirectTo("/requester");
     }
     return res;
   }
@@ -73,23 +103,21 @@ export async function middleware(req: NextRequest) {
 
   // Must finish onboarding before reaching any dashboard.
   if (!onboarded) {
-    return isOnboarding
-      ? res
-      : NextResponse.redirect(new URL("/onboarding", req.url));
+    return isOnboarding ? res : redirectTo("/onboarding");
   }
 
   // Onboarded users have no reason to see auth screens or onboarding again.
   if (isAuthPage || isOnboarding) {
-    return NextResponse.redirect(new URL(dashboardForRole(role), req.url));
+    return redirectTo(dashboardForRole(role));
   }
 
   // Role-based access control on the dashboards.
   if (role !== "both") {
     if (pathname.startsWith("/runner") && role === "requester") {
-      return NextResponse.redirect(new URL("/requester", req.url));
+      return redirectTo("/requester");
     }
     if (pathname.startsWith("/requester") && role === "runner") {
-      return NextResponse.redirect(new URL("/runner", req.url));
+      return redirectTo("/runner");
     }
   }
 
