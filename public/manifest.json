@@ -1,0 +1,20 @@
+{
+  "name": "DormDrop — Student Delivery",
+  "short_name": "DormDrop",
+  "description": "24/7 student delivery at the University of Southampton. Snacks, drinks and essentials delivered by fellow students.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fafaf9",
+  "theme_color": "#064e3b",
+  "categories": ["food", "shopping", "lifestyle"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
