@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
-// Branded social-share image, generated at the edge (no static asset to ship).
-export const runtime = "edge";
+// Branded social-share image (generated on demand; no static asset to ship).
+// Runs on the default Node runtime — keeping the app free of Edge functions.
 export const alt = "DormDrop — 24/7 student delivery at Southampton";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
